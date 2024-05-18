@@ -1,0 +1,369 @@
+#!/bin/bash
+
+TODO_FILE="$HOME/todo_list.txt"
+
+# Couleurs
+RED='\033[0;31m'
+ORANGE='\033[0;33m'
+GREEN='\033[0;32m'
+NC='\033[0m' # No Color
+
+# Fonction pour afficher l'aide
+show_help() {
+    echo "Usage: todo [command] [options]"
+    echo ""
+    echo "Commands:"
+    echo "  create -n                Create a new task with interactive prompts"
+    echo "  create -r TITLE DATE     Quick create a new task with title and due date"
+    echo "  update -c ID             Mark task as completed"
+    echo "  update -i ID             Mark task as incomplete"
+    echo "  update -a ID             Update all fields of a task interactively"
+    echo "  update -n ID [options]   Update specific fields of a task"
+    echo "                           Options:"
+    echo "                             -t TITLE        Update title"
+    echo "                             -d DESCRIPTION  Update description"
+    echo "                             -l LOCATION     Update location"
+    echo "                             -dd DATE        Update due date (DD-MM-YYYY)"
+    echo "                             -dt TIME        Update due time (HH:MM)"
+    echo "  delete ID                Delete a task by ID"
+    echo "  show ID                  Show details of a task by ID"
+    echo "  -d DATE                  List tasks for a specific date (DD-MM-YYYY)"
+    echo "  -t                       List tasks for today"
+    echo "  search -t KEYWORD        Search tasks by title"
+    echo "  search -d KEYWORD        Search tasks by description"
+    echo "  help                     Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  todo create -n"
+    echo "  todo create -r 'Buy milk' 20-05-2024"
+    echo "  todo update -c 1"
+    echo "  todo update -n 1 -d 'Change description' -dd 21-05-2024"
+    echo "  todo delete 1"
+    echo "  todo show 1"
+    echo "  todo -d 25-05-2024"
+    echo "  todo search -t 'keyword'"
+    echo "  todo search -d 'keyword'"
+    echo "  todo"
+    echo "  todo -t"
+}
+
+# Fonction pour formater et afficher une tâche
+display_task() {
+    local id=$1
+    local title=$2
+    local due_date=$3
+    local completed=$4
+    local formatted_due_date=$(date -d "$(echo $due_date | awk -F- '{print $3"-"$2"-"$1}')" "+%Y-%m-%d")
+    
+    if [ "$completed" == "true" ]; then
+        date_color=$GREEN
+    elif [ "$(date -d "$formatted_due_date" +%s)" -lt "$(date +%s)" ]; then
+        date_color=$RED
+    elif [ "$formatted_due_date" == "$(date "+%Y-%m-%d")" ]; then
+        date_color=$ORANGE
+    else
+        date_color=$NC
+    fi
+
+    echo -e "ID: $id, Title: $title, Due date: ${date_color}$due_date${NC}, Completed: $completed"
+}
+
+# Fonction pour afficher les tâches d'un jour donné
+display_tasks() {
+    local date=$1
+    echo -e "Completed tasks on $date:"
+    while IFS=',' read -r id title description location due_date due_time completed; do
+        if [ "$due_date" == "$date" ] && [ "$completed" == "true" ]; then
+            display_task $id "$title" "$due_date" "$completed"
+        fi
+    done < "$TODO_FILE"
+    echo -e "\nUncompleted tasks on $date:"
+    while IFS=',' read -r id title description location due_date due_time completed; do
+        if [ "$due_date" == "$date" ] && [ "$completed" == "false" ]; then
+            display_task $id "$title" "$due_date" "$completed"
+        fi
+    done < "$TODO_FILE"
+}
+
+# Fonction pour ajouter une nouvelle tâche
+create_task() {
+    case "$1" in
+        -r)
+            title="$2"
+            due_date="$3"
+            description="$4"
+            location="$5"
+            due_time="$6"
+
+            if [ -z "$title" ] || [ -z "$due_date" ]; then
+                echo "Title and due date are required for quick creation." >&2
+                exit 1
+            fi
+
+            if ! [[ $due_date =~ ^[0-9]{2}-[0-9]{2}-[0-9]{4}$ ]]; then
+                echo "Invalid date format. Use DD-MM-YYYY." >&2
+                exit 1
+            fi
+            ;;
+        -n)
+            read -p "Enter title (required): " title
+            if [ -z "$title" ]; then
+                echo "Title is required." >&2
+                exit 1
+            fi
+
+            read -p "Enter description: " description
+            read -p "Enter location: " location
+            read -p "Enter due date (DD-MM-YYYY, required): " due_date
+            if ! [[ $due_date =~ ^[0-9]{2}-[0-9]{2}-[0-9]{4}$ ]]; then
+                echo "Invalid date format. Use DD-MM-YYYY." >&2
+                exit 1
+            fi
+
+            read -p "Enter due time (HH:MM, optional): " due_time
+            ;;
+        *)
+            echo "Invalid option for creating task. Use -r for quick creation or -n for normal creation." >&2
+            exit 1
+            ;;
+    esac
+
+    task_id=$(($(wc -l < "$TODO_FILE") + 1))
+    echo "$task_id,$title,$description,$location,$due_date,$due_time,false" >> "$TODO_FILE"
+    echo "Task added successfully."
+}
+
+# Fonction pour mettre à jour une tâche
+update_task() {
+    local task_id=$2
+    shift 2
+    task=$(grep -E "^$task_id," "$TODO_FILE")
+    if [ -z "$task" ]; then
+        echo "Task ID not found." >&2
+        exit 1
+    fi
+
+    IFS=',' read -r -a task_data <<< "$task"
+
+    case "$1" in
+        -c)
+            sed -i "/^$task_id,/s/false$/true/" "$TODO_FILE"
+            echo "Task marked as completed."
+            ;;
+        -i)
+            sed -i "/^$task_id,/s/true$/false/" "$TODO_FILE"
+            echo "Task marked as incomplete."
+            ;;
+        -a)
+            read -p "Enter new title (leave empty to keep current): " title
+            read -p "Enter new description (leave empty to keep current): " description
+            read -p "Enter new location (leave empty to keep current): " location
+            read -p "Enter new due date (DD-MM-YYYY, leave empty to keep current): " due_date
+            read -p "Enter new due time (HH:MM, leave empty to keep current): " due_time
+            read -p "Is the task completed? (true/false, leave empty to keep current): " completed
+
+            title=${title:-${task_data[1]}}
+            description=${description:-${task_data[2]}}
+            location=${location:-${task_data[3]}}
+            due_date=${due_date:-${task_data[4]}}
+            due_time=${due_time:-${task_data[5]}}
+            completed=${completed:-${task_data[6]}}
+
+            new_task="$task_id,$title,$description,$location,$due_date,$due_time,$completed"
+            sed -i "s/^$task_id,.*/$new_task/" "$TODO_FILE"
+            echo "Task updated successfully."
+            ;;
+        -n)
+            while [[ $# -gt 0 ]]; do
+                case $1 in
+                    -t)
+                        task_data[1]=$2
+                        shift 2
+                        ;;
+                    -d)
+                        task_data[2]=$2
+                        shift 2
+                        ;;
+                    -l)
+                        task_data[3]=$2
+                        shift 2
+                        ;;
+                    -dd)
+                        if ! [[ $2 =~ ^[0-9]{2}-[0-9]{2}-[0-9]{4}$ ]]; then
+                            echo "Invalid date format. Use DD-MM-YYYY." >&2
+                            exit 1
+                        fi
+                        task_data[4]=$2
+                        shift 2
+                        ;;
+                    -dt)
+                        task_data[5]=$2
+                        shift 2
+                        ;;
+                    *)
+                        echo "Unknown option $1" >&2
+                        exit 1
+                        ;;
+                esac
+            done
+
+            new_task="${task_data[0]},${task_data[1]},${task_data[2]},${task_data[3]},${task_data[4]},${task_data[5]},${task_data[6]}"
+            sed -i "s/^$task_id,.*/$new_task/" "$TODO_FILE"
+            echo "Task updated successfully."
+            ;;
+        *)
+            echo "Invalid option for updating task. Use -c to mark as complete, -i to mark as incomplete, -a for full edit, or -n for normal edit with specific fields." >&2
+            exit 1
+            ;;
+    esac
+}
+
+# Fonction pour supprimer une tâche
+delete_task() {
+    local task_id=$1
+    if [ -z "$task_id" ]; then
+        echo "Task ID is required." >&2
+        exit 1
+    fi
+
+    if ! grep -q -E "^$task_id," "$TODO_FILE"; then
+        echo "Task ID not found." >&2
+        exit 1
+    fi
+    sed -i "/^$task_id,/d" "$TODO_FILE"
+    echo "Task deleted successfully."
+}
+
+# Fonction pour afficher les détails d'une tâche
+show_task() {
+    local task_id=$1
+    if [ -z "$task_id" ]; then
+        echo "Task ID is required." >&2
+        exit 1
+    fi
+
+    task=$(grep -E "^$task_id," "$TODO_FILE")
+    if [ -z "$task" ]; then
+        echo "Task ID not found." >&2
+        exit 1
+    fi
+    IFS=',' read -r -a task_data <<< "$task"
+    
+    echo -e "Task ID: ${task_data[0]}"
+    echo -e "Title: ${task_data[1]}"
+    echo -e "Description: ${task_data[2]}"
+    echo -e "Location: ${task_data[3]}"
+    echo -e "Due date and time: ${task_data[4]} ${task_data[5]}"
+    echo -e "Completed: ${task_data[6]}"
+}
+
+# Fonction pour afficher toutes les tâches
+display_all_tasks() {
+    echo -e "Completed tasks:"
+    while IFS=',' read -r id title description location due_date due_time completed; do
+        if [ "$completed" == "true" ]; then
+            display_task $id "$title" "$due_date" "$completed"
+        fi
+    done < "$TODO_FILE"
+
+    echo -e "\nUncompleted tasks:"
+    while IFS=',' read -r id title description location due_date due_time completed; do
+        if [ "$completed" == "false" ]; then
+            display_task $id "$title" "$due_date" "$completed"
+        fi
+    done < "$TODO_FILE"
+}
+
+# Fonction pour afficher les tâches du jour actuel
+display_today_tasks() {
+    today=$(date "+%d-%m-%Y")
+    display_tasks "$today"
+}
+
+# Fonction pour installer le script dans /usr/local/bin
+install_script() {
+    sudo cp "$0" /usr/local/bin/todo
+    sudo chmod +x /usr/local/bin/todo
+    echo "Script installed successfully. You can now use 'todo' command from anywhere."
+}
+
+# Fonction pour rechercher des tâches par titre
+search_tasks_by_title() {
+    local title="$1"
+    echo -e "Search results for title containing '$title':"
+    while IFS=',' read -r id task_title description location due_date due_time completed; do
+        if [[ "$task_title" == *"$title"* ]]; then
+            display_task $id "$task_title" "$due_date" "$completed"
+        fi
+    done < "$TODO_FILE"
+}
+
+# Fonction pour rechercher des tâches par description
+search_tasks_by_description() {
+    local description="$1"
+    echo -e "Search results for description containing '$description':"
+    while IFS=',' read -r id task_title task_description location due_date due_time completed; do
+        if [[ "$task_description" == *"$description"* ]]; then
+            display_task $id "$task_title" "$due_date" "$completed"
+        fi
+    done < "$TODO_FILE"
+}
+
+# Logique principale du script
+if [ ! -f "$TODO_FILE" ]; then
+    touch "$TODO_FILE"
+fi
+
+case $1 in
+    create)
+        shift
+        create_task "$@"
+        ;;
+    update)
+        shift
+        update_task "$@"
+        ;;
+    delete)
+        delete_task "$2"
+        ;;
+    show)
+        show_task "$2"
+        ;;
+    list)
+        read -p "Enter date (DD-MM-YYYY): " date
+        display_tasks "$date"
+        ;;
+    search)
+        shift
+        case $1 in
+            -t)
+                search_tasks_by_title "$2"
+                ;;
+            -d)
+                search_tasks_by_description "$2"
+                ;;
+            *)
+                echo "Invalid search option. Use -t for title or -d for description." >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    complete)
+        complete_task "$2"
+        ;;
+    install)
+        install_script
+        ;;
+    -t)
+        display_today_tasks
+        ;;
+    -d)
+        display_tasks "$2"
+        ;;
+    help)
+        show_help
+        ;;
+    *)
+        display_all_tasks
+        ;;
+esac
