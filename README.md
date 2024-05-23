@@ -121,7 +121,7 @@ $ todo delete 1
 Task deleted successfully.
 ```
 
-###Afficher les détails d'une tâche
+### Afficher les détails d'une tâche
 ```bash
 todo show <id>
 ```
